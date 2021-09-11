@@ -1,0 +1,247 @@
+---
+title: '50 Days Of Food'
+author: "Will Bidstrup"
+date: "06/09/2021"
+output: html_document
+---
+
+This is the companion notebook to my experiment visualizing 50 Days Of Food.
+
+# Setup
+
+I am a fan of the `tidyverse` so I will load it in.  
+
+```{r}
+
+install.packages("GGally")
+install.packages("svglite")
+```
+
+
+```{r}
+# Packages
+library(tidyverse)
+library(GGally)
+library(svglite)
+
+```
+
+# Data ingestion
+
+MyFitnessPal export generates three files, for Exercise, Measurements, and Nutrition. I export these from the app to my email and then put them in the 'data' folder of my project.  
+
+```{r}
+exercise <- read_csv("data/Exercise-Summary-2021-07-19-to-2021-09-06.csv")
+measurement <- read_csv("data/Measurement-Summary-2021-07-19-to-2021-09-06.csv")
+nutrition <- read_csv("data/Nutrition-Summary-2021-07-19-to-2021-09-06.csv")
+```
+
+
+# Data exploration
+
+## Nutrition file
+
+The nuttiotion file is the most interesting one so I will start here and only move to the others if I have an idea that requires them (for example using steps).  
+
+I really like the `glimpse` function from `tidyverse`
+
+```{r}
+# Inspect nutrition file
+
+glimpse(nutrition)
+```
+
+The nutrition file has 21 columns and is already in pretty good shape. The date is already ISO formatted, there are lots of numeric data. This is ready to go.  
+
+
+# Data visualisation
+
+For me, data visualization almost always involves some level of data transformation as well. Only onece I have found something worth keeping will I move ETL to a seperate process.
+
+
+## Energy consumption over time
+
+This will be a basic line graph of energy consumption over time.
+
+```{r}
+# Visualise
+ggplot(data = nutrition, aes(x = Date, y = Kilojoules)) +
+  geom_line()
+```
+
+You can see from above that something doesn't quite look right. It's because the Kilojoules aren't aggregated by day, but by meal (Breakfast, Snacks, Lunch, Dinner).
+
+Some pre-processing will help, I always make it explicit when I am doing exploratory work as below:  
+
+```{r}
+
+# Pre-process
+kj_by_day <- nutrition %>%
+  group_by(Date) %>%
+  summarise(Daily_Kilojoules = sum(Kilojoules, na.rm = FALSE))
+
+# Visualise
+ggplot(data = kj_by_day, aes(x = Date, y = Daily_Kilojoules)) +
+  geom_line() +
+  theme_bw()
+
+```
+
+## Salt 
+
+R is great for scatter plots ans visualizing lots of points. I wonder if looking at salt will be interesting. 
+
+
+```{r}
+glimpse(nutrition)
+```
+
+
+```{r}
+salt_analysis <- nutrition %>%
+  select(Kilojoules, `Sodium (mg)`)
+
+# Visualise 
+
+ggplot(data = nutrition, aes(x = Kilojoules, y = `Sodium (mg)`)) +
+  geom_point()
+```
+Now this is interesting, looks like I had 5000mg of sodium in one meal? 
+
+
+How about cumulative salt?
+
+```{r}
+cum_salt <- nutrition %>%
+  select(Date, `Sodium (mg)`) %>%
+  mutate(cum_salt = cumsum(`Sodium (mg)`))
+```
+
+This could be a cool visual...I have consumed about 80g of salt.  
+
+```{r}
+ggplot(data = cum_salt, aes(x = Date, y = cum_salt)) +
+  geom_line() +
+  theme_bw()
+```
+
+
+
+## Text analysis, most common foods
+
+It turns out there is no text information shared by default, it needs to be added manually in notes. This seems like a big miss.  
+
+
+## Correlation of nutrients
+
+```{r}
+ggcorr(nutrition)
+```
+
+
+
+```{r, fig.height = 10, fig.width = 10}
+nutrition_numeric <- nutrition %>%
+  select(- c(Date, Meal, Time, Note))
+
+ggpairs(nutrition_numeric)
+```
+
+## Hero Visual 1: Summary of Meals
+
+
+I want a visual which shows a lot of things:  
+
+- Time of day  
+- Meal  
+
+
+```{r}
+ggplot(data = nutrition %>%
+         mutate(Meal = fct_relevel(Meal,"Snacks", "Dinner", "Lunch", "Breakfast")), aes(x = Time, y = Meal)) +
+  geom_boxplot() +
+  geom_point(position = "jitter", alpha = 0.2) +
+  theme_bw()
+  
+```
+
+Some pre-processing will help here
+
+I want to go top to bottom breakfast, lunch, dinner, snacks
+```{r}
+# Re-order factors
+
+ggplot(data = nutrition %>%
+         mutate(Meal = fct_relevel(Meal,"Snacks", "Dinner", "Lunch", "Breakfast")), aes(x = Time, y = Meal)) +
+  geom_boxplot() +
+  geom_point(position = "jitter", alpha = 0.5) +
+  theme_minimal() +
+  labs(x = "",
+       y = "")
+
+
+
+```
+
+```{r}
+quantile_kj <- quantile(nutrition$Kilojoules,c(0,1/3,2/3,1))
+```
+
+```{r}
+
+
+nutrition <- nutrition %>%
+  mutate(KJ_quantile = cut(Kilojoules, breaks = quantile_kj, labels=c("small","medium","big")),
+         KJ_score = ifelse(KJ_quantile == "small", 1,
+                           ifelse(KJ_quantile == "medium", 2, 3)))
+
+nutrition$KJ_score <- as.integer(nutrition$KJ_score)
+```
+
+
+
+```{r}
+ggplot(data = nutrition %>%
+         mutate(Meal = fct_relevel(Meal,"Snacks", "Dinner", "Lunch", "Breakfast")), aes(x = Time, y = Meal, col = KJ_score, size = Kilojoules)) +
+  geom_boxplot() +
+  geom_point(position = "jitter", alpha = 0.4) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(x = "",
+       y = "") +
+scale_color_gradient(low="#6c5d3f", high="#ffc700")
+
+ggsave("fig1.svg")
+
+```
+
+```{r}
+ggplot(data = cum_salt, aes(x = Date, y = cum_salt)) +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "",
+       y = "")
+
+ggsave("fig2.png")
+```
+
+
+
+```{r}
+
+# Pre-process
+kj_by_day <- nutrition %>%
+  group_by(Date) %>%
+  summarise(Daily_Kilojoules = sum(Kilojoules, na.rm = FALSE))
+
+# Visualise
+ggplot(data = kj_by_day, aes(x = Date, y = Daily_Kilojoules)) +
+  geom_point() +
+  geom_smooth(col = "#ffc700", method = "lm") +
+  theme_minimal() +
+  ylim(0, 10000) +
+  labs(x = "", y = "")
+
+ggsave("fig3.png")
+
+```
